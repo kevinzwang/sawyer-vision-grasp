@@ -15,7 +15,7 @@ import vedo
 
 MAX_GRIPPER_DIST = 0.075
 MIN_GRIPPER_DIST = 0.03
-GRIPPER_LENGTH = 0.105
+GRIPPER_LENGTH = 0.11
 
 import cvxpy as cvx # suggested, but you may change your solver to anything you'd like (ex. casadi)
 
@@ -59,10 +59,6 @@ def compute_force_closure(vertices, normals, num_facets, mu, gamma, object_mass)
     
     return angle1 < alpha and angle2 < alpha and gamma > 0
     
-    
-
-
-
 def get_grasp_map(vertices, normals, num_facets, mu, gamma):
     """ 
     Defined in the book on page 219. Compute the grasp map given the contact
@@ -109,7 +105,6 @@ def get_grasp_map(vertices, normals, num_facets, mu, gamma):
     G_2 = adj_T_inv2 @ B
             
     return np.hstack((G_1, G_2))
-
 
 def contact_forces_exist(vertices, normals, num_facets, mu, gamma, desired_wrench):
     """
@@ -178,8 +173,6 @@ def contact_forces_exist(vertices, normals, num_facets, mu, gamma, desired_wrenc
     # print(fc.value)
     return prob.status == 'optimal', fc.value
     
-
-
 def compute_gravity_resistance(vertices, normals, num_facets, mu, gamma, object_mass):
     """
     Gravity produces some wrench on your object. Computes whether the grasp can 
@@ -234,7 +227,7 @@ def compute_robust_force_closure(vertices, normals, num_facets, mu, gamma, objec
     """
     desired_wrench = np.array([0, 0, 9.8 * object_mass, 0, 0, 0]).T
         
-    delta = 0.10
+    delta = 0.01
     trials = 250
     p1_list = np.random.uniform(vertices[0]-delta, vertices[0]+delta, (trials, 3))
     p2_list = np.random.uniform(vertices[1]-delta, vertices[1]+delta, (trials, 3))
@@ -302,54 +295,7 @@ def compute_robust_force_closure(vertices, normals, num_facets, mu, gamma, objec
         if statement:
             success += 1
             
-    return success/full_trails
-        
-    
-    
-def compute_ferrari_canny(vertices, normals, num_facets, mu, gamma, object_mass):
-    """
-    Should return a score for the grasp according to the Ferrari Canny metric.
-    Use your favourite python convex optimization package. We suggest cvxpy.
-
-    Parameters
-    ----------
-    vertices (2x3 np.ndarray): obj mesh vertices on which the fingers will be placed
-    normals (2x3 np.ndarray): obj mesh normals at the contact points
-    num_facets (int): number of vectors to use to approximate the friction cone, vectors 
-        will be along the friction cone boundary
-    mu (float): coefficient of friction
-    gamma (float): torsional friction coefficient
-        torsional friction coefficient
-    object_mass (float): mass of the object
-
-    Returns
-    -------
-    (float): quality of the grasp
-    """
- 
-    N = 100
-    
-    
-    g = 9.8 * object_mass
-    other = .25*g
-    d = np.array([other,other,other,0,0,0])
-    
-    LQs = []
-    for i in range(N):
-        w = np.random.uniform(-d, d) + np.array([0,0,g,0,0,0])
-        w = utils.normalize(w)
-        
-        statement, fc = contact_forces_exist(vertices, normals, num_facets, mu, gamma, w)
-        if statement:
-            LQ = min(np.linalg.norm(fc[0:4]) ** 2, np.linalg.norm(fc[4:]) ** 2)
-            if LQ:
-                LQs.append(LQ)
-    if len(LQs) > 0:     
-        return min(1/np.sqrt(LQs))
-    
-    return 0
-            
-
+    return success/full_trails, full_trails    
 
 def custom_grasp_planner(object_mesh, vertices):
     """
@@ -481,9 +427,10 @@ def custom_grasp_planner(object_mesh, vertices):
         #     continue
         
         # #Ferrari   
-        quality = compute_ferrari_canny(vertices, normals, num_facets, mu, gamma, object_mass)
+        quality, num_trails = compute_ferrari_canny(vertices, normals, num_facets, mu, gamma, object_mass)
         if  quality< ferrari_th:
-            print("Failed Ferrari {}".format(quality))
+            print("Failed Ferrari: {}".format(quality))
+            
             continue
         
         # if not (compute_force_closure(vertices, normals, num_facets, mu, gamma, object_mass) \
@@ -494,6 +441,184 @@ def custom_grasp_planner(object_mesh, vertices):
         return vertices, get_gripper_pose(vertices, object_mesh), quality
 
     return None, None, None
+
+def custom_grasp_planner_2(object_mesh):
+    """
+    Write your own grasp planning algorithm! You will take as input the mesh
+    of an object, and a pair of contact points from the surface of the mesh.
+    You should return a 4x4 ridig transform specifying the desired pose of the
+    end-effector (the gripper tip) that you would like the gripper to be at
+    before closing in order to execute your grasp.
+
+    You should be prepared to handle malformed grasps. Return None if no
+    good grasp is possible with the provided pair of contact points.
+    Keep in mind the constraints of the gripper (length, minimum and maximum
+    distance between fingers, etc) when picking a good pose, and also keep in
+    mind limitations of the robot (can the robot approach a grasp from the inside
+    of the mesh? How about from below?). You should also make sure that the robot
+    can successfully make contact with the given contact points without colliding
+    with the mesh.
+
+    The trimesh package has several useful functions that allow you to check for
+    collisions between meshes and rays, between meshes and other meshes, etc, which
+    you may want to use to make sure your grasp is not in collision with the mesh.
+
+    Take a look at the functions find_intersections, find_grasp_vertices, 
+    normal_at_point in utils.py for examples of how you might use these trimesh 
+    utilities. Be wary of using these functions directly. While they will probably 
+    work, they don't do excessive edge-case handling. You should spend some time
+    reading the documentation of these packages to find other useful utilities.
+    You may also find the collision, proximity, and intersections modules of trimesh
+    useful.
+
+    Feel free to change the signature of this function to add more arguments
+    if you believe they will be useful to your planner.
+
+    Parameters
+    ----------
+    object_mesh (trimesh.base.Trimesh): A triangular mesh of the object, as loaded in with trimesh.
+    vertices (2x3 np.ndarray): obj mesh vertices on which the fingers will be placed
+
+    Returns
+    -------
+    (4x4 np.ndarray): The rigid transform for the desired pose of the gripper, in the object's reference frame.
+    """
+
+    # constants -- you may or may not want to use these variables below
+    num_facets = 64
+    mu = 0.5
+    gamma = 0.1
+    object_mass = 0.25
+    g = 9.8
+    desired_wrench = np.array([0, 0, g * object_mass, 0, 0, 0]).T
+
+    trials = 1000
+    delta = 0.04
+    RFC_bound = 0.94
+
+    quality = 0
+
+    # YOUR CODE HERE
+    while quality < RFC_bound:  
+        #Randomly sample 2 points from mesh  
+        sample_points = object_mesh.sample(2) 
+        vertices = np.array(sampled_points)
+        vertices = vertices.reshape(2, 3)  # Reshape to 2x3 array
+        p1 = sample_points[0]
+        p2 = sample_points[1]
+
+        #Make Sure points on within grab range
+        grip_dist = np.linalg.norm(p1 - p2)
+        
+        if not (MIN_GRIPPER_DIST <= grip_dist <= MAX_GRIPPER_DIST):
+            # print("ray outside of gripper bounds")
+            continue
+
+        #Make Sure points are on external surfaces
+        ray_dir = p2 - p1
+        
+        p1_locs_in, _, _ = object_mesh.ray.intersects_location(
+            ray_origins=[p1],
+            ray_directions=[ray_dir],
+            multiple_hits=True
+        )
+        
+        p1_locs_out, _, _ = object_mesh.ray.intersects_location(
+            ray_origins=[p1],
+            ray_directions=[-ray_dir],
+            multiple_hits=True
+        )
+        
+        if len(p1_locs_in) % 2 != 0 or len(p1_locs_in) == 0 or len(p1_locs_out) != 0:
+            # print("p1 inside mesh")
+            continue
+        
+        p2_locs_in, _, _ = object_mesh.ray.intersects_location(
+            ray_origins=[p2],
+            ray_directions=[-ray_dir],
+            multiple_hits=True
+        )
+        
+        p2_locs_out, _, _ = object_mesh.ray.intersects_location(
+            ray_origins=[p2],
+            ray_directions=[ray_dir],
+            multiple_hits=True
+        )
+        
+        if len(p2_locs_in) % 2 != 0 or len(p2_locs_in) == 0 or len(p2_locs_out) != 0:
+            # print("p2 inside mesh")
+            continue
+
+        #Checking to make sure points are furthest out points in gripper width
+        gripper_pose = get_gripper_pose(vertices, object_mesh) #Returns 4x4 Transformation matrix
+
+        quat = tf.transformations.quaternion_from_matrix(gripper_pose)
+
+        t = TransformStamped()
+        t.transform.rotation.x = quat[0]
+        t.transform.rotation.y = quat[1]
+        t.transform.rotation.z = quat[2]
+        t.transform.rotation.w = quat[3]
+        
+        v = Vector3Stamped()
+        v.vector.z = -.10
+        v_t = tf2_geometry_msgs.do_transform_vector3(v, t)
+        ray_dir = np.array([v_t.vector.x,v_t.vector.y,v_t.vector.z])
+
+        p1_locs_in, _, _ = object_mesh.ray.intersects_location(
+            ray_origins=[p1],
+            ray_directions=[ray_dir],
+            multiple_hits=True
+        )
+        
+        p1_locs_out, _, _ = object_mesh.ray.intersects_location(
+            ray_origins=[p1],
+            ray_directions=[-ray_dir],
+            multiple_hits=True
+        )
+        
+        if len(p1_locs_in) > 0 or len(p1_locs_in) > 0:
+            # print("p1 inside mesh")
+            continue
+        
+        p2_locs_in, _, _ = object_mesh.ray.intersects_location(
+            ray_origins=[p2],
+            ray_directions=[-ray_dir],
+            multiple_hits=True
+        )
+        
+        p2_locs_out, _, _ = object_mesh.ray.intersects_location(
+            ray_origins=[p2],
+            ray_directions=[ray_dir],
+            multiple_hits=True
+        )
+        
+        if len(p2_locs_in) > 0 or len(p2_locs_out) > 0:
+            # print("p2 inside mesh")
+            continue
+
+        #Computing normal
+        n1 = utils.normal_at_point(object_mesh, p1)
+        n2 = utils.normal_at_point(object_mesh, p2)
+        
+        normals = np.array([n1, n2])
+        
+        if not compute_force_closure(vertices, normals, num_facets, mu, gamma, object_mass):
+            print("grasp not force closure")
+            continue
+        
+        #RFC
+        quality, num_trails = compute_robust_force_closure(vertices, normals, num_facets, mu, gamma, object_mass, object_mesh)
+        if quality < RFC_bound:
+            print("Failed RFC {}".format(quality))
+            print("Number trails: {}".format(num_trails))
+            continue
+        
+        print("Good RFC {}".format(quality))
+        print("Number trails: {}".format(num_trails))
+        print("---------------------")
+
+    return vertices, gripper_pose
 
 def get_gripper_pose(vertices, object_mesh): # you may or may not need this method 
     """
