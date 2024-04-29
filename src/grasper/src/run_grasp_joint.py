@@ -10,78 +10,85 @@ import tf
 from moveit_msgs.srv import GetPositionIK, GetPositionIKRequest, GetPositionIKResponse
 from geometry_msgs.msg import PoseStamped, TransformStamped, Vector3Stamped
 from moveit_commander import MoveGroupCommander
+from sensor_msgs.msg import Image, CameraInfo
 import numpy as np
 from numpy import linalg
 import grasping 
 import sys
 from intera_interface import gripper as robot_gripper
 import utils
+import open3d as o3d
+from cv_bridge import CvBridge
+import vedo
+import cv2
 
 from intera_interface import CHECK_VERSION
 
+JOINT_ANGLES = [
+    # top
+    [0.0313544921875, -1.0435009765625, -0.407853515625, 1.9305625, 0.22340625, 0.674134765625, -1.978115234375],
+    #front
+    [-0.273015625, 0.360087890625, -0.5494404296875, -0.2702666015625, 0.4168251953125, 2.2443759765625, -1.6088486328125],
+    #front-right
+    [-0.0325634765625, 0.508552734375, -0.799623046875, -0.766392578125, 0.0492119140625, 2.404859375, -2.169248046875],
+    #right
+    [-0.155359375, 0.836857421875, -1.2504150390625, -1.7453251953125, -0.432494140625, 2.836201171875, -2.7187900390625],
+    #back-right
+    [-0.3705029296875, 0.211244140625, -2.3767724609375, -2.2592001953125, 0.6928349609375, 2.1733017578125, -1.6913115234375],
+    #top
+    [-0.0935048828125, -0.9056484375, -0.231021484375, 1.662990234375, 0.207642578125, 0.84210546875, 1.1422392578125],
+    #back
+    [-0.069513671875, -0.1634013671875, -0.728888671875, 2.283630859375, -0.63662890625, -1.737060546875, 2.181595703125],
+    #back-left
+    [-0.37183984375, 0.0204189453125, -0.959265625, 1.3599658203125, -1.2243349609375, -1.8574423828125, 2.284703125],
+    #left
+    [-0.460669921875, 0.241029296875, -1.21113671875, 0.5238564453125, -1.27721875, -2.1212255859375, 2.3774296875]
+]
 
-def collect_points(side):
-    limb = intera_interface.Limb(side)
+color_image_msg = None
+depth_image_msg = None
+camera_intrinsics = None
+
+
+def collect_points():
+    limb = intera_interface.Limb('right')
     
-    # Joint_Angles = [
-    # # top
-    # [-0.14012890625, -0.6778544921875, -0.08773828125, 1.5137431640625, 0.10208203125, 0.7263076171875, 1.4805322265625],
-    # # front-left
-    # [-0.3122373046875, 0.4198779296875, -1.3894482421875, 0.541912109375, 1.50916796875, 2.09808203125, 4.7129150390625],
-    # # front
-    # [-0.12808203125, 0.1749873046875, -0.9763203125, 0.2274365234375, 0.779880859375, 1.9130556640625, 4.4752763671875],
-    # # iso front-right
-    # [0.141486328125, 0.1496142578125, -0.9274580078125, 0.1471103515625, 0.3057783203125, 1.8706689453125, 4.0644375],
-    # # right
-    # [-0.026697265625, -0.3664013671875, 1.06414453125, 1.1283173828125, -1.627388671875, 2.125982421875, -2.088916015625],
-    # #back-right
-    # [1.218771484375, 0.2875634765625, -1.1075478515625, 1.800669921875, 0.17175, -0.0769326171875, 3.5471865234375],
-    # #back
-    # [0.8465771484375, 0.8729521484375, -1.073880859375, 2.083978515625, 0.6101533203125, -1.550251953125, 3.399033203125],
-    # #back-left
-    # [-0.22947265625, 1.1244287109375, -1.6828623046875, 1.83616796875, 1.1379267578125, -2.6620654296875, 3.455376953125],
-    # #left
-    # [-0.70771484375, 1.055087890625, -2.5957529296875, 1.479796875, 1.4825849609375, -2.83450390625, 3.56132421875]
-    # ]
-    
-    Joint_Angles = [
-        # top
-        [0.0313544921875, -1.0435009765625, -0.407853515625, 1.9305625, 0.22340625, 0.674134765625, -1.978115234375],
-        #front
-        [-0.273015625, 0.360087890625, -0.5494404296875, -0.2702666015625, 0.4168251953125, 2.2443759765625, -1.6088486328125],
-        #front-right
-        [-0.0325634765625, 0.508552734375, -0.799623046875, -0.766392578125, 0.0492119140625, 2.404859375, -2.169248046875],
-        #right
-        [-0.155359375, 0.836857421875, -1.2504150390625, -1.7453251953125, -0.432494140625, 2.836201171875, -2.7187900390625],
-        #back-right
-        [-0.3705029296875, 0.211244140625, -2.3767724609375, -2.2592001953125, 0.6928349609375, 2.1733017578125, -1.6913115234375],
-        #top
-        [-0.0935048828125, -0.9056484375, -0.231021484375, 1.662990234375, 0.207642578125, 0.84210546875, 1.1422392578125],
-        #back
-        [-0.069513671875, -0.1634013671875, -0.728888671875, 2.283630859375, -0.63662890625, -1.737060546875, 2.181595703125],
-        #back-left
-        [-0.37183984375, 0.0204189453125, -0.959265625, 1.3599658203125, -1.2243349609375, -1.8574423828125, 2.284703125],
-        #left
-        [-0.460669921875, 0.241029296875, -1.21113671875, 0.5238564453125, -1.27721875, -2.1212255859375, 2.3774296875]
-    ]
-    
-    while not rospy.is_shutdown():
-        for joint_angle_values in Joint_Angles:
-            print("Moving!!!!!!")
-            joint_angle_dict = { f'right_j{i}': joint_angle_values[i] for i in range(7) }
-            print(joint_angle_dict)
+    for joint_angle_values in JOINT_ANGLES:
+        print("Moving!!!!!!")
+        joint_angle_dict = { f'right_j{i}': joint_angle_values[i] for i in range(7) }
+        # print(joint_angle_dict)
 
-            r = rospy.Rate(10)
-            while True:
-                limb.set_joint_position_speed(0.1)
-                limb.set_joint_positions(joint_angle_dict)
+        r = rospy.Rate(10)
+        while True:
+            limb.set_joint_position_speed(0.3)
+            limb.set_joint_positions(joint_angle_dict)
 
-                true_angles = limb.joint_angles()
-                if all([abs(joint_angle_dict[k] - true_angles[k]) < .01 for k in true_angles.keys()]):
-                    break
-                r.sleep()
+            true_angles = limb.joint_angles()
+            if all([abs(joint_angle_dict[k] - true_angles[k]) < .01 for k in true_angles.keys()]):
+                get_point_cloud()
+                break
+            r.sleep()
 
-def grasp_object():
+
+def get_point_cloud():
+    bridge = CvBridge()
+    cv_img = bridge.imgmsg_to_cv2(depth_image_msg, "16UC1")
+    cv2.imwrite("depth.png", cv_img)
+    o3d_img = o3d.t.geometry.Image(cv_img)
+
+    print("Rows:", o3d_img.rows)
+    print("Cols:", o3d_img.columns)
+
+    print("intrinsic dtype:", camera_intrinsics.intrinsic_matrix.dtype)
+    print("intrinsics:", camera_intrinsics.intrinsic_matrix)
+    print("dtype:", o3d_img.dtype)
+
+    point_cloud = o3d.geometry.PointCloud.create_from_depth_image(o3d_img, camera_intrinsics.intrinsic_matrix)
+
+    vedo.show([point_cloud], new=True)
+
+
+def grasp_object(mesh):
     rospy.wait_for_service('compute_ik')
     rospy.init_node('service_query')
     # Create the function used to call the service
@@ -252,7 +259,22 @@ def grasp_object():
         rospy.sleep(1.0)
         print('Done!')
 
+def color_image_callback(msg):
+    global color_image_msg
+    color_image_msg = msg
 
+
+def depth_image_callback(msg):
+    global depth_image_msg
+    depth_image_msg = msg
+
+
+def camera_info_callback(msg):
+    global camera_intrinsics
+
+    intrinsic_mat = np.asarray(msg.K, dtype=np.float64).reshape((3, 3))
+
+    camera_intrinsics = o3d.camera.PinholeCameraIntrinsic(msg.width, msg.height, intrinsic_mat)
 
 
 def main():
@@ -264,41 +286,21 @@ def main():
     of a joint on Sawyer's arm. The increasing and descreasing
     are represented by number key and letter key next to the number.
     """
-    epilog = """
-    See help inside the example with the '?' key for key bindings.
-    """
-    rp = intera_interface.RobotParams()
-    valid_limbs = rp.get_limb_names()
-    if not valid_limbs:
-        rp.log_message(("Cannot detect any limb parameters on this robot. "
-                        "Exiting."), "ERROR")
-        return
-    arg_fmt = argparse.RawDescriptionHelpFormatter
-    parser = argparse.ArgumentParser(formatter_class=arg_fmt,
-                                     description=main.__doc__,
-                                     epilog=epilog)
-    parser.add_argument(
-        "-l", "--limb", dest="limb", default=valid_limbs[0],
-        choices=valid_limbs,
-        help="Limb on which to run the joint position keyboard example"
-    )
-    args = parser.parse_args(rospy.myargv()[1:])
 
     print("Initializing node... ")
     rospy.init_node("sdk_joint_position_keyboard")
+
+    print("Subscribing to camera...")
+    color_image_sub = rospy.Subscriber("/camera/color/image_raw", Image, color_image_callback)
+    depth_image_sub = rospy.Subscriber("/camera/aligned_depth_to_color/image_raw", Image, depth_image_callback)
+    camera_info_sub = rospy.Subscriber("/camera/color/camera_info", CameraInfo, camera_info_callback)
+
+
     print("Getting robot state... ")
-    rs = intera_interface.RobotEnable(CHECK_VERSION)
-    init_state = rs.state().enabled
 
-    def clean_shutdown():
-        print("\nExiting example.")
-    rospy.on_shutdown(clean_shutdown)
-
-    rospy.loginfo("Enabling robot...")
-    rs.enable()
-    collect_points(args.limb)
+    collect_points()
     print("Done Collecting Points")
-    grasp_object()
+    # grasp_object()
 
 
 

@@ -16,13 +16,13 @@ Commands you can run:
     ```
 - Publish Realsense webcam:
     ```
-    roslaunch realsense2_camera rs_camera.launch mode:=Manual color_width:=424 \
-    color_height:=240 depth_width:=424 depth_height:=240 align_depth:=true \
+    roslaunch realsense2_camera rs_camera.launch mode:=Manual color_width:=1280 \
+    color_height:=720 depth_width:=1280 depth_height:=720 align_depth:=true \
     depth_fps:=6 color_fps:=6
     ```
 - Add realsense TF to Rviz
     ```
-    rosrun tf static_transform_publisher 0.05 0 0.05 0 0 -0.70710678 0.70710678 /right_hand /usb_cam 1000
+    rosrun tf static_transform_publisher 0.05 0.035 0.05 0 -0.70710678 0 0.70710678 /right_hand /camera_link 1000
     ```
 - Start MoveIt: (run both in different terminals)
     ```
