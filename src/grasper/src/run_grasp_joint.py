@@ -21,6 +21,7 @@ import open3d as o3d
 from cv_bridge import CvBridge
 import vedo
 import cv2
+from ros_numpy import numpify
 
 from intera_interface import CHECK_VERSION
 
@@ -45,10 +46,21 @@ JOINT_ANGLES = [
     [-0.460669921875, 0.241029296875, -1.21113671875, 0.5238564453125, -1.27721875, -2.1212255859375, 2.3774296875]
 ]
 
-color_image_msg = None
-depth_image_msg = None
-camera_intrinsics = None
+BOUNDING_BOX = np.array([
+    [0.67, -0.1, -0.195],
+    [0.67, 0.1, -0.195],
+    [0.47, 0.1, -0.195],
+    [0.47, -0.1, -0.195],
+    [0.67, -0.1, 0.005],
+    [0.67, 0.1, 0.005],
+    [0.47, 0.1, 0.005],
+    [0.47, -0.1, 0.005]
+])
 
+color_image_msg = None
+depth_image_msgs = []
+camera_intrinsics = None
+point_cloud = None
 
 def collect_points():
     limb = intera_interface.Limb('right')
@@ -65,27 +77,84 @@ def collect_points():
 
             true_angles = limb.joint_angles()
             if all([abs(joint_angle_dict[k] - true_angles[k]) < .01 for k in true_angles.keys()]):
+                rospy.sleep(3)
                 get_point_cloud()
                 break
             r.sleep()
+    
+    print("writing point cloud")
+    o3d.io.write_point_cloud("point_cloud_egg.pcd", point_cloud)
+
+    mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_alpha_shape(point_cloud, 0.005)
+    mesh = mesh.filter_smooth_simple(3)
+    mesh.compute_vertex_normals()
+    o3d.visualization.draw_geometries([mesh])
+
+    # mesh1 = point_cloud.compute_convex_hull()[0]
+    # o3d.visualization.draw_geometries([mesh1])
+
+    # distances = point_cloud.compute_nearest_neighbor_distance()
+    # avg_dist = np.mean(distances)
+    # factor = 3
+    # radius = factor * avg_dist   
+    # radi =  o3d.utility.DoubleVector([radius, radius * 2])
+    # mesh2 = o3d.geometry.TriangleMesh.create_from_point_cloud_ball_pivoting(point_cloud, radi)
+    # o3d.visualization.draw_geometries([mesh2])
+
 
 
 def get_point_cloud():
     bridge = CvBridge()
-    cv_img = bridge.imgmsg_to_cv2(depth_image_msg, "16UC1")
-    cv2.imwrite("depth.png", cv_img)
-    o3d_img = o3d.t.geometry.Image(cv_img)
+    images = [bridge.imgmsg_to_cv2(msg, "16UC1") for msg in depth_image_msgs]
 
-    print("Rows:", o3d_img.rows)
-    print("Cols:", o3d_img.columns)
+    cv_img = np.median(images, axis=0).astype(np.uint16)
+    print(cv_img.shape)
+    print(images[0].shape)
 
-    print("intrinsic dtype:", camera_intrinsics.intrinsic_matrix.dtype)
-    print("intrinsics:", camera_intrinsics.intrinsic_matrix)
-    print("dtype:", o3d_img.dtype)
+    # o3d_img = o3d.t.geometry.Image(cv_img)
 
-    point_cloud = o3d.geometry.PointCloud.create_from_depth_image(o3d_img, camera_intrinsics.intrinsic_matrix)
 
-    vedo.show([point_cloud], new=True)
+    # print("Rows:", o3d_img.rows)
+    # print("Cols:", o3d_img.columns)
+
+    # print("intrinsic dtype:", camera_intrinsics.intrinsic_matrix.dtype)
+    # print("intrinsics:", camera_intrinsics.intrinsic_matrix)
+    # print("dtype:", o3d_img.dtype)
+
+    # point_cloud = o3d.geometry.PointCloud.create_from_depth_image(o3d_img, camera_intrinsics.intrinsic_matrix)
+    
+    ## ADDED THIS
+
+    tfBuffer = tf2_ros.Buffer()
+    listener = tf2_ros.TransformListener(tfBuffer)
+    trans = tfBuffer.lookup_transform('base', depth_image_msgs[0].header.frame_id, rospy.Time(0), rospy.Duration(10.0))
+    trans_mat = numpify(trans.transform)
+    
+    o3d_img = o3d.geometry.Image(cv_img)
+    new_pcd = o3d.geometry.PointCloud.create_from_depth_image(o3d_img, camera_intrinsics)
+    new_pcd = new_pcd.transform(trans_mat)
+
+    bbox_vec = o3d.utility.Vector3dVector(BOUNDING_BOX)
+    bbox = o3d.geometry.AxisAlignedBoundingBox.create_from_points(bbox_vec)
+
+    new_pcd = new_pcd.crop(bbox)
+    new_pcd.estimate_normals()
+
+    global point_cloud
+    if point_cloud is None:
+        point_cloud = new_pcd
+    else:
+        point_cloud += new_pcd
+
+    o3d.visualization.draw_geometries([point_cloud])
+    # vedo.show([point_cloud], new=True)
+
+    """
+    front left. 0.69214, -0.11493, -0.1666
+    front right 0.68717, 0.10626, -0.16641
+    back right 0.46128, 0.09588, -0.1645
+    back left 0.47131, -0.12594, -0.16532
+    """
 
 
 def grasp_object(mesh):
@@ -265,16 +334,27 @@ def color_image_callback(msg):
 
 
 def depth_image_callback(msg):
-    global depth_image_msg
-    depth_image_msg = msg
+    global depth_image_msgs
+    depth_image_msgs.append(msg)
+
+    if len(depth_image_msgs) > 11:
+        depth_image_msgs.pop(0)
 
 
 def camera_info_callback(msg):
     global camera_intrinsics
 
+    # intrinsic_mat = np.asarray(msg.K, dtype=np.float64).reshape((3, 3))
     intrinsic_mat = np.asarray(msg.K, dtype=np.float64).reshape((3, 3))
 
-    camera_intrinsics = o3d.camera.PinholeCameraIntrinsic(msg.width, msg.height, intrinsic_mat)
+
+    ## ADDED THIS
+    fx, fy = intrinsic_mat[0,0], intrinsic_mat[1,1]
+    ppx, ppy = intrinsic_mat[0,2], intrinsic_mat[1,2]
+    camera_intrinsics = o3d.camera.PinholeCameraIntrinsic()
+    camera_intrinsics.set_intrinsics(msg.width, msg.height, fx, fy, ppx, ppy)
+
+    # camera_intrinsics = o3d.camera.PinholeCameraIntrinsic(msg.width, msg.height, intrinsic_mat)
 
 
 def main():
