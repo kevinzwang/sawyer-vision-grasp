@@ -11,6 +11,9 @@ import utils
 import math
 import trimesh
 import vedo
+from geometry_msgs.msg import PoseStamped, TransformStamped, Vector3Stamped
+import tf2_geometry_msgs
+import tf
 
 
 MAX_GRIPPER_DIST = 0.075
@@ -498,55 +501,38 @@ def custom_grasp_planner_2(object_mesh):
 
     quality = 0
 
+    min_corner, max_corner = object_mesh.bounding_box.bounds
+    
+    
     # YOUR CODE HERE
+    print("Searching for points that meet base criteria")
     while quality < RFC_bound:  
         #Randomly sample 2 points from mesh  
-        sample_points = object_mesh.sample(2) 
-        vertices = np.array(sampled_points)
-        vertices = vertices.reshape(2, 3)  # Reshape to 2x3 array
-        p1 = sample_points[0]
-        p2 = sample_points[1]
+        xs = np.random.uniform(min_corner[0],max_corner[0],2)
+        ys = np.random.uniform(min_corner[1],max_corner[1],2)
+        zs = np.random.uniform(min_corner[2],max_corner[2],2)
+        vertices = np.array([[xs[0], ys[0], zs[0]],[xs[1], ys[1], zs[1]]])
+        
+        p1 = vertices[0]
+        p2 = vertices[1]
+
+        locations = utils.find_grasp_vertices(object_mesh, p1, p2)[0]
+
+        if len(locations) > 1:
+            p1 = locations[0]
+            p2 = locations[1]
+        else:
+            print("locations failed?? ", locations)
+
+        vertices = np.array([p1,p2]).reshape(2,3)  # Reshape to 2x3 array for future manipulations
+
+
 
         #Make Sure points on within grab range
         grip_dist = np.linalg.norm(p1 - p2)
         
         if not (MIN_GRIPPER_DIST <= grip_dist <= MAX_GRIPPER_DIST):
-            # print("ray outside of gripper bounds")
-            continue
-
-        #Make Sure points are on external surfaces
-        ray_dir = p2 - p1
-        
-        p1_locs_in, _, _ = object_mesh.ray.intersects_location(
-            ray_origins=[p1],
-            ray_directions=[ray_dir],
-            multiple_hits=True
-        )
-        
-        p1_locs_out, _, _ = object_mesh.ray.intersects_location(
-            ray_origins=[p1],
-            ray_directions=[-ray_dir],
-            multiple_hits=True
-        )
-        
-        if len(p1_locs_in) % 2 != 0 or len(p1_locs_in) == 0 or len(p1_locs_out) != 0:
-            # print("p1 inside mesh")
-            continue
-        
-        p2_locs_in, _, _ = object_mesh.ray.intersects_location(
-            ray_origins=[p2],
-            ray_directions=[-ray_dir],
-            multiple_hits=True
-        )
-        
-        p2_locs_out, _, _ = object_mesh.ray.intersects_location(
-            ray_origins=[p2],
-            ray_directions=[ray_dir],
-            multiple_hits=True
-        )
-        
-        if len(p2_locs_in) % 2 != 0 or len(p2_locs_in) == 0 or len(p2_locs_out) != 0:
-            # print("p2 inside mesh")
+            print("ray outside of gripper bounds")
             continue
 
         #Checking to make sure points are furthest out points in gripper width
@@ -578,7 +564,7 @@ def custom_grasp_planner_2(object_mesh):
         )
         
         if len(p1_locs_in) > 0 or len(p1_locs_in) > 0:
-            # print("p1 inside mesh")
+            print("p1 width failure")
             continue
         
         p2_locs_in, _, _ = object_mesh.ray.intersects_location(
@@ -594,7 +580,7 @@ def custom_grasp_planner_2(object_mesh):
         )
         
         if len(p2_locs_in) > 0 or len(p2_locs_out) > 0:
-            # print("p2 inside mesh")
+            print("p2 width failure")
             continue
 
         #Computing normal
@@ -603,6 +589,9 @@ def custom_grasp_planner_2(object_mesh):
         
         normals = np.array([n1, n2])
         
+        ##TODO: ERRORING AFTER THIS STEP###################################################
+        print("Point pass base criteria")
+
         if not compute_force_closure(vertices, normals, num_facets, mu, gamma, object_mass):
             print("grasp not force closure")
             continue

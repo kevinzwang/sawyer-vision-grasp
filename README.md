@@ -18,7 +18,7 @@ Commands you can run:
     ```
     roslaunch realsense2_camera rs_camera.launch mode:=Manual color_width:=1280 \
     color_height:=720 depth_width:=1280 depth_height:=720 align_depth:=true \
-    depth_fps:=6 color_fps:=6
+    depth_fps:=30 color_fps:=30
     ```
 - Add realsense TF to Rviz
     ```
@@ -33,4 +33,8 @@ Commands you can run:
 - Run grasper
     ```
     rosrun grasper run_grasp.py
+    ```
+- Put point on robot
+    ```
+    rosrun tf static_transform_publisher -0.008 -0.0445 0.069 0 0 0 1 /right_gripper_base /asdf 1000
     ```
