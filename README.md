@@ -24,6 +24,8 @@ Commands you can run:
     ```
     <!-- rosrun tf static_transform_publisher 0.05 0.035 0.05 0 -0.70710678 0 0.70710678 /right_hand /camera_link 1000 -->
     rosrun tf static_transform_publisher 0.062 0.022 0.045 0 -0.7154594 0.0313995 0.6979484 /right_hand /camera_link 1000
+
+    rosrun tf static_transform_publisher 0.064 0.0245 0.043 0 -0.7155149 0.0250545 0.6981481  /right_hand /camera_link 1000
     ```
 - Start MoveIt: (run both in different terminals)
     ```
