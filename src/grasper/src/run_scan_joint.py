@@ -86,6 +86,9 @@ def collect_points():
     print("writing point cloud")
     o3d.io.write_point_cloud("point_cloud_egg.pcd", point_cloud)
 
+    point_cloud = point_cloud.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)
+    point_cloud = point_cloud.uniform_down_sample(every_k_points=20)
+
     mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_alpha_shape(point_cloud, 0.005)
     mesh = mesh.filter_smooth_simple(3)
     mesh.compute_vertex_normals()
