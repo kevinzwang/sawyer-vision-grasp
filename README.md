@@ -1,5 +1,7 @@
 # Sawyer Vision Grasp
 
+See [106B_Final_Project_Report.pdf](106B_Final_Project_Report.pdf) to more information about this project.
+
 Commands you can run:
 
 - Enable Sawyer:
